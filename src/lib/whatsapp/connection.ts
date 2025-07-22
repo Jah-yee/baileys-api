@@ -20,10 +20,12 @@ import { logger } from "../logger";
 import type { ShallowExtract } from "../types";
 import { WhatsAppAuthState } from "./auth-state";
 import { type Events, eventEmitter } from "./events";
-import { WhatsAppChatHandlers } from "./handlers/chats";
-import { WhatsAppContactHandlers } from "./handlers/contacts";
-import { WhatsAppGroupHandlers } from "./handlers/groups";
-import { WhatsAppMessageHandlers } from "./handlers/messages";
+import {
+	WhatsAppChatHandlers,
+	WhatsAppContactHandlers,
+	WhatsAppGroupHandlers,
+	WhatsAppMessageHandlers,
+} from "./handlers";
 import type { BaileysEvents, EventHandler, EventHandlers } from "./types";
 
 const connectionsMap = new Map<string, WhatsAppConnection>();
@@ -80,6 +82,17 @@ export class WhatsAppConnection {
 		return this.#id;
 	}
 
+	get logger() {
+		return this.#logger;
+	}
+
+	get connection() {
+		if (!this.#connection) {
+			throw new Error("Connection is not initialized");
+		}
+		return this.#connection;
+	}
+
 	get status() {
 		if (!this.#connection) {
 			return "disconnected";
@@ -89,11 +102,12 @@ export class WhatsAppConnection {
 		return authenticatedJid ? "authenticated" : "connected";
 	}
 
-	get connection() {
-		if (!this.#connection) {
-			throw new Error("Connection is not initialized");
-		}
-		return this.#connection;
+	get qrCode() {
+		return this.#qrCode;
+	}
+
+	get pairCode() {
+		return this.#pairCode;
 	}
 
 	async setOptions(options: Partial<WhatsAppConnectionOptions>) {
@@ -161,7 +175,7 @@ export class WhatsAppConnection {
 			await this.#save();
 		}
 
-		const authState = new WhatsAppAuthState(this.id, this.#logger);
+		const authState = new WhatsAppAuthState(this);
 		await authState.initialize();
 
 		this.#connection = makeWASocket({
@@ -211,11 +225,8 @@ export class WhatsAppConnection {
 			);
 		}
 
-		this.#connection?.ev.removeAllListeners("creds.update");
-		this.#connection?.ev.removeAllListeners("connection.update");
 		// @ts-expect-error this is a valid event used by the batching system
 		this.#connection?.ev.removeAllListeners("event");
-
 		this.#connection = null;
 		this.#qrCode = null;
 		this.#resetPairCode();
@@ -396,8 +407,8 @@ export class WhatsAppConnection {
 			const data = await db.query.messages.findFirst({
 				where: and(
 					eq(tables.messages.connectionId, this.id),
-					eq(sql`${tables.messages.key}->>remoteJid`, normalizedJid),
-					eq(sql`${tables.messages.key}->>id`, key.id),
+					eq(sql`${tables.messages.key}->>'remoteJid'`, normalizedJid),
+					eq(sql`${tables.messages.key}->>'id'`, key.id),
 				),
 			});
 

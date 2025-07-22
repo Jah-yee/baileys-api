@@ -26,6 +26,12 @@
 		"format": "biome format . --write",
 		"typecheck": "tsc"
 	},
+	"files": [
+		"dist/",
+		"migrations/",
+		".env.example",
+		"drizzle.config.ts"
+	],
 	"devDependencies": {
 		"@biomejs/biome": "2.1.2",
 		"@types/node": "^20.19.9",
@@ -48,6 +54,7 @@
 		"drizzle-orm": "^0.44.3",
 		"hono": "^4.8.5",
 		"link-preview-js": "^3.1.0",
+		"long": "^5.3.2",
 		"pg": "^8.16.3",
 		"pino": "^9.7.0",
 		"qrcode": "^1.5.4",

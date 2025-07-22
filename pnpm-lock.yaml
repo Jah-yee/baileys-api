@@ -35,6 +35,9 @@ importers:
       link-preview-js:
         specifier: ^3.1.0
         version: 3.1.0
+      long:
+        specifier: ^5.3.2
+        version: 5.3.2
       pg:
         specifier: ^8.16.3
         version: 8.16.3

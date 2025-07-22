@@ -2,17 +2,18 @@ import * as baileys from "baileys";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type pino from "pino";
 import { db, type TransactionDbClient, tables } from "../db";
+import type { WhatsAppConnection } from "./connection";
 
 export class WhatsAppAuthState {
-	#connectionId: number;
+	#connection: WhatsAppConnection;
 	#logger: pino.Logger;
 
 	// Mutable, since baileys will mutate the state
 	state: baileys.AuthenticationState;
 
-	constructor(connectionId: number, logger: pino.Logger) {
-		this.#connectionId = connectionId;
-		this.#logger = logger.child({ name: "WhatsAppAuthState" });
+	constructor(connection: WhatsAppConnection) {
+		this.#connection = connection;
+		this.#logger = connection.logger.child({ name: "WhatsAppAuthState" });
 
 		this.state = {
 			creds: baileys.initAuthCreds(),
@@ -74,7 +75,7 @@ export class WhatsAppAuthState {
 		try {
 			const data = await db.query.authStates.findFirst({
 				where: and(
-					eq(tables.authStates.connectionId, this.#connectionId),
+					eq(tables.authStates.connectionId, this.#connection.id),
 					eq(tables.authStates.name, name),
 				),
 			});
@@ -93,7 +94,7 @@ export class WhatsAppAuthState {
 		try {
 			const data = await db.query.authStates.findMany({
 				where: and(
-					eq(tables.authStates.connectionId, this.#connectionId),
+					eq(tables.authStates.connectionId, this.#connection.id),
 					inArray(tables.authStates.name, names),
 				),
 			});
@@ -125,7 +126,7 @@ export class WhatsAppAuthState {
 			await (tx ?? db)
 				.insert(tables.authStates)
 				.values({
-					connectionId: this.#connectionId,
+					connectionId: this.#connection.id,
 					name,
 					data: JSON.stringify(value, baileys.BufferJSON.replacer),
 				})
@@ -144,7 +145,7 @@ export class WhatsAppAuthState {
 				.delete(tables.authStates)
 				.where(
 					and(
-						eq(tables.authStates.connectionId, this.#connectionId),
+						eq(tables.authStates.connectionId, this.#connection.id),
 						eq(tables.authStates.name, name),
 					),
 				);
