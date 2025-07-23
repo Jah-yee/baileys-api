@@ -449,7 +449,7 @@ export class WhatsAppConnection {
 export async function restoreConnections() {
 	const connections = await db.query.connections.findMany();
 	for (const connection of connections) {
-		const options = connection.data as WhatsAppConnectionOptions;
+		const options = connection.data!;
 		const instance = new WhatsAppConnection(options, connection.id);
 
 		void instance.connect();

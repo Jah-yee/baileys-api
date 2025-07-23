@@ -29,6 +29,9 @@ importers:
       drizzle-orm:
         specifier: ^0.44.3
         version: 0.44.3(@types/pg@8.15.4)(bun-types@1.2.19(@types/react@19.1.8))(pg@8.16.3)
+      drizzle-zod:
+        specifier: ^0.8.2
+        version: 0.8.2(drizzle-orm@0.44.3(@types/pg@8.15.4)(bun-types@1.2.19(@types/react@19.1.8))(pg@8.16.3))(zod@4.0.5)
       hono:
         specifier: ^4.8.5
         version: 4.8.5
@@ -1254,6 +1257,12 @@ packages:
         optional: true
       sqlite3:
         optional: true
+
+  drizzle-zod@0.8.2:
+    resolution: {integrity: sha512-9Do/16OjFFNrQDZgvMtxtDDwKWbFOxUAIwNPKX98SfxrP8H18vhN1BvNXbhelLcdgCE7GEaXDJqBjMExSkhpkA==}
+    peerDependencies:
+      drizzle-orm: '>=0.36.0'
+      zod: ^3.25.1
 
   dunder-proto@1.0.1:
     resolution: {integrity: sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A==}
@@ -3087,6 +3096,11 @@ snapshots:
       '@types/pg': 8.15.4
       bun-types: 1.2.19(@types/react@19.1.8)
       pg: 8.16.3
+
+  drizzle-zod@0.8.2(drizzle-orm@0.44.3(@types/pg@8.15.4)(bun-types@1.2.19(@types/react@19.1.8))(pg@8.16.3))(zod@4.0.5):
+    dependencies:
+      drizzle-orm: 0.44.3(@types/pg@8.15.4)(bun-types@1.2.19(@types/react@19.1.8))(pg@8.16.3)
+      zod: 4.0.5
 
   dunder-proto@1.0.1:
     dependencies:

@@ -6,7 +6,7 @@ import {
 } from "../../lib/validation";
 
 export const bodySchema = z.object({
-	name: z.string().openapi({
+	name: z.string().trim().min(1).max(255).openapi({
 		description: "Unique identifier for the connection name",
 		example: "connection-123",
 	}),
@@ -25,7 +25,8 @@ export const bodySchema = z.object({
 
 export const route = createRoute({
 	tags: ["Connections"],
-	summary: "Create a new WhatsApp connection",
+	summary: "Create new connection",
+	description: "Create a new WhatsApp connection with the provided options",
 	method: "post",
 	path: "/create",
 	request: {
@@ -47,7 +48,7 @@ export const route = createRoute({
 			},
 		},
 		400: {
-			description: "Invalid request payload",
+			description: "Invalid request parameters",
 			content: {
 				"application/json": {
 					schema: errorResponseSchema,
