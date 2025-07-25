@@ -222,14 +222,12 @@ app.openapi(eventsRoute, async (c) => {
 		}
 
 		eventEmitter.on("event", handler);
-		stream.onAbort(() => {
-			eventEmitter.off("event", handler);
+		await new Promise<void>((resolve) => {
+			c.req.raw.signal.addEventListener("abort", () => {
+				eventEmitter.off("event", handler);
+				resolve();
+			});
 		});
-
-		// Keep the stream alive
-		while (true) {
-			await stream.sleep(60_000);
-		}
 	});
 });
 

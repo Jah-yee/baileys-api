@@ -375,7 +375,7 @@ export class WhatsAppConnection {
 				this.#broadcastEvent("connection:error", {
 					code: "disconnected",
 					message:
-						"Logged out or max reconnect attempts reached,destroying connection",
+						"Logged out or max reconnect attempts reached, destroying connection",
 				});
 				return;
 			}

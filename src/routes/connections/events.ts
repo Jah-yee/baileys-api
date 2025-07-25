@@ -2,9 +2,7 @@ import { createRoute, z } from "@hono/zod-openapi";
 
 const successResponseSchema = z.string().openapi({
 	description: "Stream of connection events",
-	example: `event: connnection-123
-data: {"name":"connection:initialize","data":{"message":"Connection initialized"}}
-    `,
+	example: `{"event":{"name":"connection:initialize","data":{"message":"Initializing connection"}},"connection":{"name":"test"}}`,
 });
 
 export const route = createRoute({
