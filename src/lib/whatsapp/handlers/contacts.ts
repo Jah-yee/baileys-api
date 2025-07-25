@@ -1,8 +1,8 @@
 import { type Contact, jidNormalizedUser } from "baileys";
 import { and, eq } from "drizzle-orm";
 import type pino from "pino";
-import { db, tables } from "../../db";
-import { generateExcludedFields } from "../../db/utils";
+import { db, tables } from "~/lib/db";
+import { generateExcludedFields } from "~/lib/db/utils";
 import type { WhatsAppConnection } from "../connection";
 import type { EventHandler, EventHandlers } from "../types";
 
@@ -15,9 +15,9 @@ export class WhatsAppContactHandlers {
 		this.#connection = connection;
 		this.#logger = connection.logger.child({ name: "WhatsAppContactHandlers" });
 		this.#handlers = {
-			"messaging-history.set": this.#historySync,
-			"contacts.upsert": this.#upsert,
-			"contacts.update": this.#update,
+			"messaging-history.set": this.#historySync.bind(this),
+			"contacts.upsert": this.#upsert.bind(this),
+			"contacts.update": this.#update.bind(this),
 		};
 	}
 

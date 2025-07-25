@@ -22,21 +22,12 @@ export const phoneNumberSchema = z.string().trim().regex(PHONE_REGEX).openapi({
 	pattern: "^[1-9]\\d{2,31}$",
 });
 
-export const paginationSchema = z
-	.object({
-		page: z.coerce.number().int().min(1).default(1).openapi({
-			description: "Page number for pagination",
-			example: 1,
-		}),
-		size: z.coerce.number().int().min(1).max(100).default(20).openapi({
-			description: "Number of items per page",
-			example: 20,
-		}),
-	})
-	.openapi({
-		description: "Pagination parameters",
-		example: {
-			page: 1,
-			size: 20,
-		},
-	});
+export const paginationSchema = z.object({
+	cursor: z.coerce.number().int().min(1).nullable().default(null).openapi({
+		description: "Cursor for pagination",
+	}),
+	size: z.coerce.number().int().min(1).max(100).default(20).openapi({
+		description: "Number of items per page",
+		example: 20,
+	}),
+});

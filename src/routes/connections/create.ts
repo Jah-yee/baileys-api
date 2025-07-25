@@ -3,9 +3,9 @@ import {
 	errorResponseSchema,
 	phoneNumberSchema,
 	successResponseSchema,
-} from "../../lib/validation";
+} from "~/lib/validation";
 
-export const bodySchema = z.object({
+export const createConnectionBodySchema = z.object({
 	name: z.string().trim().min(1).max(255).openapi({
 		description: "Unique identifier for the connection name",
 		example: "connection-123",
@@ -26,14 +26,14 @@ export const bodySchema = z.object({
 export const route = createRoute({
 	tags: ["Connections"],
 	summary: "Create new connection",
-	description: "Create a new WhatsApp connection with the provided options",
+	description: "Create a new connection with the provided options",
 	method: "post",
 	path: "/create",
 	request: {
 		body: {
 			content: {
 				"application/json": {
-					schema: bodySchema,
+					schema: createConnectionBodySchema,
 				},
 			},
 		},

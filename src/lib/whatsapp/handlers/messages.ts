@@ -6,8 +6,8 @@ import {
 } from "baileys";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type pino from "pino";
-import { db, type TransactionDbClient, tables } from "../../db";
-import { generateExcludedFields } from "../../db/utils";
+import { db, type TransactionDbClient, tables } from "~/lib/db";
+import { generateExcludedFields } from "~/lib/db/utils";
 import type { WhatsAppConnection } from "../connection";
 import type { EventHandler, EventHandlers } from "../types";
 
@@ -20,12 +20,12 @@ export class WhatsAppMessageHandlers {
 		this.#connection = connection;
 		this.#logger = connection.logger.child({ name: "WhatsAppMessageHandlers" });
 		this.#handlers = {
-			"messaging-history.set": this.#historySync,
-			"messages.upsert": this.#upsert,
-			"messages.update": this.#update,
-			"messages.delete": this.#delete,
-			"messages.reaction": this.#reaction,
-			"message-receipt.update": this.#receipt,
+			"messaging-history.set": this.#historySync.bind(this),
+			"messages.upsert": this.#upsert.bind(this),
+			"messages.update": this.#update.bind(this),
+			"messages.delete": this.#delete.bind(this),
+			"messages.reaction": this.#reaction.bind(this),
+			"message-receipt.update": this.#receipt.bind(this),
 		};
 	}
 
@@ -161,8 +161,8 @@ export class WhatsAppMessageHandlers {
 
 					if (affected.length <= 0) {
 						this.#logger.warn(
-							{ update },
-							`Got update for non-existent message with key: "${key}"`,
+							{ update, key },
+							`Got update for non-existent message`,
 						);
 					}
 				});
@@ -238,8 +238,8 @@ export class WhatsAppMessageHandlers {
 				});
 				if (!message) {
 					this.#logger.warn(
-						{ reaction },
-						`Got reaction for non-existent message with key: "${key}"`,
+						{ reaction, key },
+						`Got reaction for non-existent message`,
 					);
 					continue;
 				}
@@ -266,8 +266,8 @@ export class WhatsAppMessageHandlers {
 
 					if (affected.length <= 0) {
 						this.#logger.warn(
-							{ reaction },
-							`Got reaction for non-existent message with key: "${key}"`,
+							{ reaction, key },
+							`Got reaction for non-existent message`,
 						);
 					}
 				});
@@ -298,8 +298,8 @@ export class WhatsAppMessageHandlers {
 				});
 				if (!message) {
 					this.#logger.warn(
-						{ receipt },
-						`Got receipt for non-existent message with key: "${key}"`,
+						{ receipt, key },
+						`Got receipt for non-existent message`,
 					);
 					continue;
 				}
@@ -327,8 +327,8 @@ export class WhatsAppMessageHandlers {
 
 					if (affected.length <= 0) {
 						this.#logger.warn(
-							{ receipt },
-							`Got receipt for non-existent message with key: "${key}"`,
+							{ receipt, key },
+							`Got receipt for non-existent message`,
 						);
 					}
 				});

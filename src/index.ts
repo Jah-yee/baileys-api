@@ -1,4 +1,5 @@
 import { serve } from "@hono/node-server";
+import { serveStatic } from "@hono/node-server/serve-static";
 import { swaggerUI } from "@hono/swagger-ui";
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { cors } from "hono/cors";
@@ -7,17 +8,27 @@ import { logger as honoLogger } from "hono/logger";
 import { env } from "./lib/env";
 import { serializeError } from "./lib/error";
 import { logger } from "./lib/logger";
+import { restoreConnections } from "./lib/whatsapp";
 import { connectionMiddleware } from "./middlewares/connection";
 import { connectionRoutes } from "./routes/connections";
 import { messageRoutes } from "./routes/messages";
 
+await restoreConnections();
+
 const app = new OpenAPIHono();
 app.use(cors());
 app.use(honoLogger());
-app.use("/connections/:name/*", connectionMiddleware);
 
+if (env.NODE_ENV === "development") {
+	app.get("/", serveStatic({ root: "./examples", path: "./sse.html" }));
+}
 app.route("/connections", connectionRoutes);
-app.route("/connections/:name/messages", messageRoutes);
+
+const guarded = new OpenAPIHono();
+guarded.use(connectionMiddleware);
+guarded.route("/messages", messageRoutes);
+
+app.route("/connections/:name", guarded);
 
 app.doc("/doc", {
 	openapi: "3.0.0",

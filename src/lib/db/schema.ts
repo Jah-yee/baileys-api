@@ -50,7 +50,7 @@ export const authStates = pgTable(
 			.notNull()
 			.references(() => connections.id, { onDelete: "cascade" }),
 		name: varchar({ length: 255 }).notNull(),
-		data: text().notNull(),
+		data: text(),
 	},
 	(table) => [unique().on(table.connectionId, table.name)],
 );
@@ -260,9 +260,9 @@ export const groups = pgTable(
 			.references(() => connections.id, { onDelete: "cascade" }),
 
 		id: varchar({ length: 128 }).notNull(),
-		addressingMode: varchar({ length: 3 }).notNull(),
+		addressingMode: varchar({ length: 3 }),
 		owner: varchar({ length: 128 }),
-		subject: varchar({ length: 255 }).notNull(),
+		subject: varchar({ length: 255 }),
 		subjectOwner: varchar({ length: 128 }),
 		subjectTime: bigint({ mode: "number" }),
 		creation: bigint({ mode: "number" }),
@@ -277,7 +277,7 @@ export const groups = pgTable(
 		isCommunity: boolean(),
 		isCommunityAnnounce: boolean(),
 		size: integer(),
-		participants: jsonb().$type<GroupParticipant[]>().notNull(),
+		participants: jsonb().$type<GroupParticipant[]>(),
 		ephemeralDuration: integer(),
 		inviteCode: varchar({ length: 64 }),
 		author: varchar({ length: 128 }),

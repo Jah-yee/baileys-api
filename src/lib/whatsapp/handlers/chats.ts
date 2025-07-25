@@ -1,8 +1,8 @@
 import { type Chat, jidNormalizedUser } from "baileys";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type pino from "pino";
-import { db, type TransactionDbClient, tables } from "../../db";
-import { generateExcludedFields } from "../../db/utils";
+import { db, type TransactionDbClient, tables } from "~/lib/db";
+import { generateExcludedFields } from "~/lib/db/utils";
 import type { WhatsAppConnection } from "../connection";
 import type { EventHandler, EventHandlers } from "../types";
 
@@ -15,10 +15,10 @@ export class WhatsAppChatHandlers {
 		this.#connection = connection;
 		this.#logger = connection.logger.child({ name: "WhatsAppChatHandlers" });
 		this.#handlers = {
-			"messaging-history.set": this.#historySync,
-			"chats.upsert": this.#upsert,
-			"chats.update": this.#update,
-			"chats.delete": this.#delete,
+			"messaging-history.set": this.#historySync.bind(this),
+			"chats.upsert": this.#upsert.bind(this),
+			"chats.update": this.#update.bind(this),
+			"chats.delete": this.#delete.bind(this),
 		};
 	}
 

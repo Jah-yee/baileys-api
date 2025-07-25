@@ -1,11 +1,11 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { createSelectSchema } from "drizzle-zod";
-import { tables } from "../../lib/db";
+import { tables } from "~/lib/db";
 import {
+	successResponseSchema as baseSuccessResponseSchema,
 	errorResponseSchema,
-	successResponseSchema,
-} from "../../lib/validation";
-import { bodySchema } from "./create";
+} from "~/lib/validation";
+import { createConnectionBodySchema } from "./create";
 
 export const connectionSchema = createSelectSchema(tables.connections)
 	.extend({
@@ -13,27 +13,29 @@ export const connectionSchema = createSelectSchema(tables.connections)
 	})
 	.openapi("Connection");
 
-export const paramsSchema = bodySchema.pick({ name: true });
+export const findConnectionParamsSchema = createConnectionBodySchema.pick({
+	name: true,
+});
 
-export const successSchema = successResponseSchema.extend({
+const successResponseSchema = baseSuccessResponseSchema.extend({
 	data: connectionSchema,
 });
 
 export const route = createRoute({
 	tags: ["Connections"],
 	summary: "Get connection details",
-	description: "Retrieve details of a specific connection by name",
+	description: "Retrieve details of a specific connection",
 	method: "get",
 	path: "/{name}",
 	request: {
-		params: paramsSchema,
+		params: findConnectionParamsSchema,
 	},
 	responses: {
 		200: {
 			description: "Connection details retrieved successfully",
 			content: {
 				"application/json": {
-					schema: successSchema,
+					schema: successResponseSchema,
 				},
 			},
 		},

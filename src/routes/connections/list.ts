@@ -1,19 +1,21 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import {
+	successResponseSchema as baseSuccessResponseSchema,
 	errorResponseSchema,
 	paginationSchema,
-	successResponseSchema,
-} from "./../../lib/validation";
+} from "~/lib/validation";
 import { connectionSchema } from "./find";
 
-export const successSchema = successResponseSchema.extend({
+const successResponseSchema = baseSuccessResponseSchema.extend({
 	data: z.array(connectionSchema),
+	cursor: paginationSchema.shape.cursor,
 });
 
 export const route = createRoute({
 	tags: ["Connections"],
 	summary: "List all connections",
-	description: "Retrieve a list of saved connections in paginated format",
+	description:
+		"Retrieve a list of saved connections in cursor-based pagination format",
 	method: "get",
 	path: "/",
 	request: {
@@ -24,7 +26,7 @@ export const route = createRoute({
 			description: "Connections list retrieved successfully",
 			content: {
 				"application/json": {
-					schema: successSchema,
+					schema: successResponseSchema,
 				},
 			},
 		},

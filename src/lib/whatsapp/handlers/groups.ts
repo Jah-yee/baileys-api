@@ -1,8 +1,8 @@
 import { jidNormalizedUser } from "baileys";
 import { and, eq } from "drizzle-orm";
 import type pino from "pino";
-import { db, tables } from "../../db";
-import { generateExcludedFields } from "../../db/utils";
+import { db, tables } from "~/lib/db";
+import { generateExcludedFields } from "~/lib/db/utils";
 import type { WhatsAppConnection } from "../connection";
 import type { EventHandler, EventHandlers } from "../types";
 
@@ -15,9 +15,9 @@ export class WhatsAppGroupHandlers {
 		this.#connection = connection;
 		this.#logger = connection.logger.child({ name: "WhatsAppGroupHandlers" });
 		this.#handlers = {
-			"groups.upsert": this.#upsert,
-			"groups.update": this.#update,
-			"group-participants.update": this.#participantsUpdate,
+			"groups.upsert": this.#upsert.bind(this),
+			"groups.update": this.#update.bind(this),
+			"group-participants.update": this.#participantsUpdate.bind(this),
 		};
 	}
 
@@ -106,7 +106,7 @@ export class WhatsAppGroupHandlers {
 					return;
 				}
 
-				let participants = group.participants;
+				let participants = group.participants ?? [];
 				switch (update.action) {
 					case "add":
 						participants.push(

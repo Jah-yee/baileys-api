@@ -11,10 +11,14 @@ export function generateExcludedFields<
 		.filter((key) => !excludedKeys?.includes(key as keyof Data))
 		.reduce(
 			(acc, key) => {
-				acc[key] = sql`excluded.${key}`;
+				acc[key] = sql.raw(`excluded.${camelToSnake(key)}`);
 				return acc;
 			},
 			// biome-ignore lint/suspicious/noExplicitAny: No brainer way to type this
 			{} as any,
 		);
+}
+
+function camelToSnake(str: string) {
+	return str.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 }

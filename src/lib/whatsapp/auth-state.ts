@@ -83,7 +83,7 @@ export class WhatsAppAuthState {
 				return null;
 			}
 
-			return JSON.parse(data.data, baileys.BufferJSON.reviver);
+			return JSON.parse(data.data ?? "{}", baileys.BufferJSON.reviver);
 		} catch (err) {
 			this.#logger.error({ err }, `Failed to read auth state for "${name}"`);
 			return null;
@@ -103,7 +103,7 @@ export class WhatsAppAuthState {
 				try {
 					return {
 						...d,
-						state: JSON.parse(d.data, baileys.BufferJSON.reviver),
+						state: JSON.parse(d.data ?? "{}", baileys.BufferJSON.reviver),
 					};
 				} catch {
 					return { ...d, state: null };

@@ -13,13 +13,13 @@ import {
 import { and, eq, sql } from "drizzle-orm";
 import type pino from "pino";
 import type z from "zod/v4";
-import type { bodySchema } from "../../routes/connections/create";
+import type { createConnectionBodySchema } from "~/routes/connections/create";
 import { db, tables } from "../db";
 import { env } from "../env";
 import { logger } from "../logger";
 import type { ShallowExtract } from "../types";
 import { WhatsAppAuthState } from "./auth-state";
-import { type Events, eventEmitter } from "./events";
+import { type ConnectionEvents, eventEmitter } from "./events";
 import {
 	WhatsAppChatHandlers,
 	WhatsAppContactHandlers,
@@ -37,15 +37,17 @@ const RECONNECT_INTERVAL = env.RECONNECT_INTERVAL;
 const MAX_QR_ATTEMPTS = env.MAX_QR_ATTEMPTS;
 const PAIR_CODE_TIMEOUT = env.PAIR_CODE_TIMEOUT;
 
-export type WhatsAppConnectionOptions = z.infer<typeof bodySchema>;
+export type WhatsAppConnectionOptions = z.infer<
+	typeof createConnectionBodySchema
+>;
 
 export class WhatsAppConnection {
 	#id: number | null;
 	#options: WhatsAppConnectionOptions;
-	#logger: pino.Logger;
+	#logger: pino.Logger = logger;
 
 	#connection: WASocket | null = null;
-	#eventHandlers: EventHandlers;
+	#eventHandlers: EventHandlers = {};
 
 	#qrCode: string | null = null;
 	#pairCode: string | null = null;
@@ -54,25 +56,7 @@ export class WhatsAppConnection {
 	constructor(options: WhatsAppConnectionOptions, id?: number) {
 		this.#id = id ?? null;
 		this.#options = options;
-		this.#logger = logger.child({
-			name: "WhatsAppConnection",
-			connectionName: options.name,
-			phone: options.phone,
-		});
-
-		const chatHandlers = new WhatsAppChatHandlers(this);
-		const contactHandlers = new WhatsAppContactHandlers(this);
-		const groupHandlers = new WhatsAppGroupHandlers(this);
-		const messageHandlers = new WhatsAppMessageHandlers(this);
-
-		this.#eventHandlers = {
-			...chatHandlers.handlers,
-			...contactHandlers.handlers,
-			...groupHandlers.handlers,
-			...messageHandlers.handlers,
-			"connection.update": this.#handleConnectionUpdate.bind(this),
-			call: this.#handleCall.bind(this),
-		};
+		this.#setup();
 	}
 
 	get id() {
@@ -120,6 +104,33 @@ export class WhatsAppConnection {
 			throw new Error(message);
 		}
 
+		const newOptions = {
+			...this.#options,
+			...options,
+			baileysOptions: {
+				...this.#options.baileysOptions,
+				...options.baileysOptions,
+			},
+		};
+
+		try {
+			await db.transaction(async (tx) => {
+				await tx
+					.update(tables.connections)
+					.set({ name: options.name, data: newOptions })
+					.where(eq(tables.connections.id, this.id));
+			});
+		} catch (err) {
+			const message = `Failed to update connection options`;
+			this.#logger.error({ err }, message);
+			throw new Error(message);
+		}
+
+		// Delete the instance from the map if the name changed
+		if (options.name && options.name !== this.#options.name) {
+			connectionsMap.delete(this.#options.name);
+		}
+
 		// Reset auth method if phone number changed
 		if (options.phone && options.phone !== this.#options.phone) {
 			await this.setAuthMethod("qr");
@@ -130,19 +141,8 @@ export class WhatsAppConnection {
 			await this.setAuthMethod(options.authMethod);
 		}
 
-		this.#options = {
-			...this.#options,
-			...options,
-			baileysOptions: {
-				...this.#options.baileysOptions,
-				...options.baileysOptions,
-			},
-		};
-		this.#logger = logger.child({
-			name: "WhatsAppConnection",
-			connectionName: options.name,
-			phone: options.phone,
-		});
+		this.#options = newOptions;
+		this.#setup();
 
 		logger.info("Restarting connection due to options change");
 		this.#connection?.end(
@@ -150,6 +150,7 @@ export class WhatsAppConnection {
 				statusCode: DisconnectReason.restartRequired,
 			}),
 		);
+		await this.connect();
 	}
 
 	async setAuthMethod(method: WhatsAppConnectionOptions["authMethod"]) {
@@ -180,8 +181,9 @@ export class WhatsAppConnection {
 
 		this.#connection = makeWASocket({
 			markOnlineOnConnect: false,
-			browser: Browsers.ubuntu("Google Chrome"),
+			generateHighQualityLinkPreview: true,
 			syncFullHistory: true,
+			browser: Browsers.ubuntu("Chrome"),
 			...this.#options.baileysOptions,
 			logger,
 			auth: {
@@ -192,19 +194,16 @@ export class WhatsAppConnection {
 			cachedGroupMetadata: this.#getGroup.bind(this),
 		});
 
-		this.#connection.ev.process(async (events) => {
-			if (events["creds.update"]) {
-				await authState.saveCredentials();
-			}
-
-			for (const [event, data] of Object.entries(events)) {
-				const handler = this.#eventHandlers[event as BaileysEvents];
-				if (handler) {
-					// biome-ignore lint/suspicious/noExplicitAny: This is a dynamic event handler
-					void handler(data as any);
-				}
-			}
-		});
+		this.#connection.ev.on(
+			"creds.update",
+			authState.saveCredentials.bind(authState),
+		);
+		for (const [event, handler] of Object.entries(this.#eventHandlers)) {
+			this.#connection.ev.on(
+				event as BaileysEvents,
+				handler as EventHandler<BaileysEvents>,
+			);
+		}
 	}
 
 	async destroy(shouldLogout = true) {
@@ -225,8 +224,10 @@ export class WhatsAppConnection {
 			);
 		}
 
-		// @ts-expect-error this is a valid event used by the batching system
-		this.#connection?.ev.removeAllListeners("event");
+		this.#connection?.ev.removeAllListeners("creds.update");
+		for (const event of Object.keys(this.#eventHandlers)) {
+			this.#connection?.ev.removeAllListeners(event as BaileysEvents);
+		}
 		this.#connection = null;
 		this.#qrCode = null;
 		this.#resetPairCode();
@@ -234,6 +235,38 @@ export class WhatsAppConnection {
 		connectionsMap.delete(this.#options.name);
 		reconnectAttemptsMap.delete(this.#options.name);
 		qrAttemptsMap.delete(this.#options.name);
+	}
+
+	#setup() {
+		this.#logger = logger.child({
+			name: "WhatsAppConnection",
+			connectionName: this.#options.name,
+			phone: this.#options.phone,
+		});
+
+		this.#qrCode = null;
+		this.#resetPairCode();
+		reconnectAttemptsMap.delete(this.#options.name);
+		qrAttemptsMap.delete(this.#options.name);
+
+		this.#connection?.ev.removeAllListeners("creds.update");
+		for (const event of Object.keys(this.#eventHandlers)) {
+			this.#connection?.ev.removeAllListeners(event as BaileysEvents);
+		}
+
+		const chatHandlers = new WhatsAppChatHandlers(this);
+		const contactHandlers = new WhatsAppContactHandlers(this);
+		const groupHandlers = new WhatsAppGroupHandlers(this);
+		const messageHandlers = new WhatsAppMessageHandlers(this);
+
+		this.#eventHandlers = {
+			...chatHandlers.handlers,
+			...contactHandlers.handlers,
+			...groupHandlers.handlers,
+			...messageHandlers.handlers,
+			"connection.update": this.#handleConnectionUpdate.bind(this),
+			call: this.#handleCall.bind(this),
+		};
 	}
 
 	async #save() {
@@ -324,6 +357,9 @@ export class WhatsAppConnection {
 			this.#broadcastEvent("connection:authenticated", {
 				message: "Connection authenticated successfully",
 			});
+
+			const groups = await this.connection.groupFetchAllParticipating();
+			this.connection.ev.emit("groups.upsert", Object.values(groups));
 			return;
 		}
 
@@ -436,13 +472,16 @@ export class WhatsAppConnection {
 		}
 	};
 
-	#broadcastEvent<EventName extends Events["name"]>(
+	#broadcastEvent<EventName extends ConnectionEvents["name"]>(
 		name: EventName,
-		data: ShallowExtract<Events, { name: EventName }>["data"],
+		data: ShallowExtract<ConnectionEvents, { name: EventName }>["data"],
 	) {
 		const event = { name, data };
 		this.#logger.info({ event }, `Broadcasting event`);
-		eventEmitter.emit("event", event);
+		eventEmitter.emit("event", {
+			event,
+			connection: { name: this.#options.name },
+		});
 	}
 }
 

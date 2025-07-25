@@ -9,11 +9,10 @@ interface ContextVariables {
 export const connectionMiddleware = createMiddleware<{
 	Variables: ContextVariables;
 }>(async (c, next) => {
-	const name = c.req.param("name");
+	const name = c.req.path.split("/connections/")?.[1]?.split("/")?.[0];
 	if (!name) {
 		throw new HTTPException(500, {
-			message:
-				"Connection middleware should only be used with a connection name",
+			message: "Could not determine connection name from request path",
 		});
 	}
 

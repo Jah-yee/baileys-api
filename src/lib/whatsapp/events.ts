@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 
 export const eventEmitter = new EventEmitter();
 
-export type Events =
+export type ConnectionEvents =
 	| {
 			name:
 				| "connection:initialize"
@@ -24,3 +24,8 @@ export type Events =
 				message: string;
 			};
 	  };
+
+export interface Events {
+	connection: { name: string };
+	event: ConnectionEvents;
+}
