@@ -1,24 +1,16 @@
 import { type SQL, sql } from "drizzle-orm";
 
-export function generateExcludedFields<
-	Data extends Record<string, unknown>,
-	ExcludedKeys extends (keyof Data)[] = never,
->(
-	data: Data,
-	excludedKeys?: ExcludedKeys,
-): Omit<Record<keyof Data, SQL>, ExcludedKeys[number]> {
+export function mapToExcluded<T extends Record<string, unknown>, U extends keyof T = never>(
+	data: T,
+	excludedKeys: U[] = [],
+): Omit<Record<keyof T, SQL>, U> {
 	return Object.keys(data)
-		.filter((key) => !excludedKeys?.includes(key as keyof Data))
+		.filter((key) => !excludedKeys.includes(key as U))
 		.reduce(
-			(acc, key) => {
-				acc[key] = sql.raw(`excluded.${camelToSnake(key)}`);
-				return acc;
+			(obj, key) => {
+				obj[key as Exclude<keyof T, U>] = sql.raw(`excluded.${key}`);
+				return obj;
 			},
-			// biome-ignore lint/suspicious/noExplicitAny: No brainer way to type this
-			{} as any,
+			{} as Omit<Record<keyof T, SQL>, U>,
 		);
-}
-
-function camelToSnake(str: string) {
-	return str.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 }

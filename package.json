@@ -1,21 +1,20 @@
 {
 	"name": "baileys-api",
-	"description": "An implementation of baileys as REST API",
-	"version": "2.0.0",
-	"repository": "https://github.com/ookamiiixd/baileys-api",
+	"module": "./dist/index.js",
+	"type": "module",
+	"version": "0.1.0",
+	"private": true,
+	"repository": "github:ookamiiixd/baileys-api",
 	"author": "Royhan (https://github.com/ookamiiixd)",
 	"bugs": {
 		"url": "https://github.com/ookamiiixd/baileys-api/issues"
 	},
 	"homepage": "https://github.com/ookamiiixd/baileys-api",
 	"license": "MIT",
-	"module": "dist/index.js",
-	"type": "module",
-	"private": true,
 	"scripts": {
-		"start": "node --env-file=.env dist/index.js",
-		"dev": "tsx --env-file=.env src/index.ts",
-		"build": "tsup src/index.ts --format esm",
+		"prepare": "effect-language-service patch",
+		"dev": "bun ./src/index.ts",
+		"format": "biome format . --write",
 		"db:push": "drizzle-kit push",
 		"db:generate": "drizzle-kit generate",
 		"db:drop": "drizzle-kit drop",
@@ -23,43 +22,45 @@
 		"db:studio": "drizzle-kit studio --port 3001",
 		"lint": "biome lint .",
 		"lint:fix": "biome lint . --write",
-		"format": "biome format . --write",
 		"typecheck": "tsc"
 	},
-	"files": [
-		"dist/",
-		"migrations/",
-		".env.example",
-		"drizzle.config.ts"
-	],
-	"devDependencies": {
-		"@biomejs/biome": "2.1.2",
-		"@types/node": "^20.19.9",
-		"@types/pg": "^8.15.4",
-		"@types/qrcode": "^1.5.5",
-		"drizzle-kit": "^0.31.4",
-		"tsup": "^8.5.0",
-		"tsx": "^4.20.3"
-	},
-	"peerDependencies": {
-		"typescript": "^5"
-	},
 	"dependencies": {
-		"@hapi/boom": "^10.0.1",
-		"@hono/node-server": "^1.17.1",
-		"@hono/swagger-ui": "^0.5.2",
-		"@hono/zod-openapi": "^1.0.2",
-		"@hono/zod-validator": "^0.7.2",
-		"baileys": "^6.7.18",
-		"drizzle-orm": "^0.44.3",
-		"drizzle-zod": "^0.8.2",
-		"hono": "^4.8.5",
-		"link-preview-js": "^3.1.0",
+		"@cacheable/node-cache": "^1",
+		"@effect/opentelemetry": "^0.61.0",
+		"@effect/platform": "^0.94.2",
+		"@effect/platform-node": "^0.104.1",
+		"@effect/sql-pg": "^0.50.1",
+		"@hapi/boom": "^9",
+		"@opentelemetry/api-logs": "^0.211.0",
+		"@opentelemetry/exporter-logs-otlp-http": "^0.211.0",
+		"@opentelemetry/exporter-trace-otlp-http": "^0.211.0",
+		"@opentelemetry/sdk-logs": "^0.211.0",
+		"@opentelemetry/sdk-trace-base": "^2.5.0",
+		"baileys": "^7.0.0-rc.9",
+		"drizzle-orm": "^1.0.0-beta.15-859cf75",
+		"effect": "^3.19.15",
+		"link-preview-js": "^3",
 		"long": "^5.3.2",
-		"pg": "^8.16.3",
-		"pino": "^9.7.0",
+		"pg": "^8.18.0",
+		"proxy-agent": "^6.5.0",
 		"qrcode": "^1.5.4",
-		"sharp": "^0.34.3",
-		"zod": "^4.0.5"
-	}
+		"sharp": "^0.34.5"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.3.13",
+		"@effect/language-service": "^0.72.0",
+		"@types/bun": "latest",
+		"@types/pg": "^8.16.0",
+		"@types/qrcode": "^1.5.6",
+		"drizzle-kit": "^1.0.0-beta.15-859cf75",
+		"typescript": "^5.9.3"
+	},
+	"trustedDependencies": [
+		"@parcel/watcher",
+		"baileys",
+		"esbuild",
+		"msgpackr-extract",
+		"protobufjs",
+		"sharp"
+	]
 }

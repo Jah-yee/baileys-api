@@ -1,5 +1,3 @@
-export type ShallowExtract<T, U> = T extends T
-	? U extends Partial<T>
-		? T
-		: never
-	: never;
+export type MakeNonNullable<T, K extends keyof T> = T & {
+	[P in K]-?: NonNullable<T[P]>;
+};

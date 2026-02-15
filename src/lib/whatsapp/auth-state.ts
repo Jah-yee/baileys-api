@@ -1,156 +1,201 @@
-import * as baileys from "baileys";
+import {
+	type AuthenticationCreds,
+	type AuthenticationState,
+	initAuthCreds,
+	proto,
+	type SignalDataSet,
+	type SignalDataTypeMap,
+} from "baileys";
 import { and, eq, inArray, sql } from "drizzle-orm";
-import type pino from "pino";
-import { db, type TransactionDbClient, tables } from "../db";
-import type { WhatsAppConnection } from "./connection";
+import { Effect, Either, Runtime } from "effect";
+import * as RetryPolicy from "~/lib/retry-policy.js";
+import type * as ConnectionSchema from "~/modules/connections/schema.js";
+import { decode, type Encode, encode } from "../codec.js";
+import * as Database from "../db/index.js";
 
-export class WhatsAppAuthState {
-	#connection: WhatsAppConnection;
-	#logger: pino.Logger;
+const CREDENTIALS_NAME = "credentials";
 
-	// Mutable, since baileys will mutate the state
-	state: baileys.AuthenticationState;
+export const make = Effect.fn("WhatsAppAuthState.make")(function* (
+	connection: ConnectionSchema.Connection,
+) {
+	const runtime = yield* Effect.runtime();
+	const db = yield* Database.Database;
 
-	constructor(connection: WhatsAppConnection) {
-		this.#connection = connection;
-		this.#logger = connection.logger.child({ name: "WhatsAppAuthState" });
+	const credentials = yield* Effect.gen(function* () {
+		const fallback = initAuthCreds();
+		const existing = yield* db.query.authStates
+			.findFirst({
+				where: {
+					connectionId: connection.recordId,
+					name: CREDENTIALS_NAME,
+				},
+			})
+			.pipe(RetryPolicy.make(Database.retryPolicy));
+		if (existing) {
+			const parsed = yield* Effect.try(() => decode(existing.data)).pipe(
+				Effect.catchAll((e) =>
+					Effect.gen(function* () {
+						yield* Effect.logError(
+							"Failed to decode credentials. Falling back to default credentials. Your session may be invalidated.",
+							e,
+						);
+						return fallback;
+					}),
+				),
+			);
 
-		this.state = {
-			creds: baileys.initAuthCreds(),
-			keys: {
-				get: this.#handleKeysGet,
-				set: this.#handleKeysSet,
-			},
-		};
-	}
-
-	async initialize() {
-		const credentials = await this.#read("credentials");
-		if (credentials) {
-			this.state.creds = credentials;
+			return parsed as AuthenticationCreds;
 		}
-	}
 
-	async saveCredentials() {
-		await this.#write("credentials", this.state.creds);
-	}
+		return fallback;
+	}).pipe(Effect.withSpan("WhatsAppAuthState.load"));
 
-	#handleKeysGet: baileys.SignalKeyStore["get"] = async (type, names) => {
-		const data: Record<string, baileys.SignalDataTypeMap[typeof type]> = {};
-		const authStates = await this.#readMany(names);
+	const save = Effect.fn("WhatsAppAuthState.save")(function* () {
+		const maybeData = yield* Effect.either(Effect.try(() => encode(credentials)));
+		if (Either.isLeft(maybeData)) {
+			return yield* Effect.logError(
+				"Failed to encode credentials. Saving aborted.",
+				maybeData.left,
+			);
+		}
 
-		for (const authState of authStates) {
-			let value = authState.state;
-			if (type === "app-state-sync-key" && value) {
-				value = baileys.proto.Message.AppStateSyncKeyData.fromObject(value);
+		yield* db
+			.insert(Database.tables.authStates)
+			.values({
+				connectionId: connection.recordId,
+				name: CREDENTIALS_NAME,
+				data: maybeData.right,
+			})
+			.onConflictDoUpdate({
+				target: [Database.tables.authStates.connectionId, Database.tables.authStates.name],
+				set: { data: sql`excluded.data` },
+			})
+			.pipe(RetryPolicy.make(Database.retryPolicy));
+	});
+
+	const reset = Effect.fn("WhatsAppAuthState.reset")(function* () {
+		yield* db
+			.delete(Database.tables.authStates)
+			.where(eq(Database.tables.authStates.connectionId, connection.recordId))
+			.pipe(RetryPolicy.make(Database.retryPolicy));
+	});
+
+	const getKeys = Effect.fn("WhatsAppAuthState.getKeys")(function* <
+		T extends keyof SignalDataTypeMap,
+	>(type: T, ids: string[]) {
+		const rows = yield* db.query.authStates
+			.findMany({
+				where: {
+					connectionId: connection.recordId,
+					name: {
+						in: ids.map((id) => `${type}-${id}`),
+					},
+				},
+			})
+			.pipe(RetryPolicy.make(Database.retryPolicy));
+
+		const data: Record<string, SignalDataTypeMap[T]> = {};
+		for (const row of rows) {
+			const id = row.name.split(`${type}-`)[1];
+			const maybeValue = yield* Effect.either(Effect.try(() => decode(row.data)));
+			if (!id) {
+				yield* Effect.logError(`Invalid auth state name format: "${row.name}". Skipping.`);
+				continue;
+			} else if (Either.isLeft(maybeValue)) {
+				yield* Effect.logError(
+					`Failed to decode auth state with name: "${row.name}". Skipping.`,
+					maybeValue.left,
+				);
+				continue;
 			}
-			data[authState.name] = value;
+
+			let value = maybeValue.right;
+			if (type === "app-state-sync-key" && value) {
+				value = proto.Message.AppStateSyncKeyData.fromObject(
+					value as SignalDataTypeMap["app-state-sync-key"],
+				) as any;
+			}
+			data[id] = value as SignalDataTypeMap[T];
 		}
 
 		return data;
-	};
+	});
 
-	#handleKeysSet: baileys.SignalKeyStore["set"] = async (data) => {
-		await db.transaction(async (tx) => {
-			const promises: Promise<void>[] = [];
+	const setKeys = Effect.fn("WhatsAppAuthState.setKeys")(function* (data: SignalDataSet) {
+		const additions: {
+			name: string;
+			data: Encode<SignalDataTypeMap[keyof SignalDataTypeMap]>;
+		}[] = [];
+		const deletions: string[] = [];
 
-			type Category = keyof baileys.SignalDataTypeMap;
-			for (const category in data) {
-				for (const name in data[category as Category]) {
-					const value = data[category as Category]?.[name];
-					const stateName = `${category}-${name}`;
-					promises.push(
-						value
-							? this.#write(stateName, value, tx)
-							: this.#delete(stateName, tx),
-					);
+		for (const category in data) {
+			for (const id in data[category as keyof SignalDataTypeMap]) {
+				const value = data[category as keyof SignalDataTypeMap]?.[id];
+				const name = `${category}-${id}`;
+
+				if (value) {
+					const maybeEncoded = yield* Effect.either(Effect.try(() => encode(value)));
+					if (Either.isLeft(maybeEncoded)) {
+						yield* Effect.logError(
+							`Failed to encode auth state with name: "${name}". Skipping.`,
+							maybeEncoded.left,
+						);
+						continue;
+					}
+
+					additions.push({ name, data: maybeEncoded.right });
+				} else {
+					deletions.push(name);
 				}
 			}
+		}
 
-			await Promise.all(promises);
-		});
+		if (additions.length <= 0 && deletions.length <= 0) {
+			return;
+		}
+
+		yield* db
+			.transaction((tx) =>
+				Effect.gen(function* () {
+					if (additions.length > 0) {
+						yield* tx
+							.insert(Database.tables.authStates)
+							.values(
+								additions.map((item) => ({
+									connectionId: connection.recordId,
+									name: item.name,
+									data: item.data,
+								})),
+							)
+							.onConflictDoUpdate({
+								target: [Database.tables.authStates.connectionId, Database.tables.authStates.name],
+								set: { data: sql`excluded.data` },
+							});
+					}
+
+					if (deletions.length > 0) {
+						yield* tx
+							.delete(Database.tables.authStates)
+							.where(
+								and(
+									eq(Database.tables.authStates.connectionId, connection.recordId),
+									inArray(Database.tables.authStates.name, deletions),
+								),
+							);
+					}
+				}),
+			)
+			.pipe(RetryPolicy.make(Database.retryPolicy));
+	});
+
+	const state: AuthenticationState = {
+		creds: credentials,
+		keys: {
+			get: (type, ids) => Runtime.runPromise(runtime)(getKeys(type, ids)),
+			set: (data) => Runtime.runPromise(runtime)(setKeys(data)),
+		},
 	};
 
-	async #read(name: string) {
-		try {
-			const data = await db.query.authStates.findFirst({
-				where: and(
-					eq(tables.authStates.connectionId, this.#connection.id),
-					eq(tables.authStates.name, name),
-				),
-			});
-			if (!data) {
-				return null;
-			}
-
-			return JSON.parse(data.data ?? "{}", baileys.BufferJSON.reviver);
-		} catch (err) {
-			this.#logger.error({ err }, `Failed to read auth state for "${name}"`);
-			return null;
-		}
-	}
-
-	async #readMany(names: string[]) {
-		try {
-			const data = await db.query.authStates.findMany({
-				where: and(
-					eq(tables.authStates.connectionId, this.#connection.id),
-					inArray(tables.authStates.name, names),
-				),
-			});
-
-			const deserialized = data.map((d) => {
-				try {
-					return {
-						...d,
-						state: JSON.parse(d.data ?? "{}", baileys.BufferJSON.reviver),
-					};
-				} catch {
-					return { ...d, state: null };
-				}
-			});
-
-			return deserialized;
-		} catch (err) {
-			this.#logger.error(
-				{ err },
-				`Failed to read auth states for "${names.join(", ")}"`,
-			);
-			return [];
-		}
-	}
-
-	// biome-ignore lint/suspicious/noExplicitAny: This is a dynamic write
-	async #write(name: string, value: any, tx?: TransactionDbClient) {
-		try {
-			await (tx ?? db)
-				.insert(tables.authStates)
-				.values({
-					connectionId: this.#connection.id,
-					name,
-					data: JSON.stringify(value, baileys.BufferJSON.replacer),
-				})
-				.onConflictDoUpdate({
-					target: [tables.authStates.connectionId, tables.authStates.name],
-					set: { data: sql`excluded.data` },
-				});
-		} catch (err) {
-			this.#logger.error({ err }, `Failed to write auth state for "${name}"`);
-		}
-	}
-
-	async #delete(name: string, tx?: TransactionDbClient) {
-		try {
-			await (tx ?? db)
-				.delete(tables.authStates)
-				.where(
-					and(
-						eq(tables.authStates.connectionId, this.#connection.id),
-						eq(tables.authStates.name, name),
-					),
-				);
-		} catch (err) {
-			this.#logger.error({ err }, `Failed to delete auth state for "${name}"`);
-		}
-	}
-}
+	return { state, save, reset };
+});
+export type WhatsAppAuthState = Effect.Effect.Success<ReturnType<typeof make>>;
