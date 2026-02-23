@@ -25,6 +25,15 @@
 					"fix": "safe",
 					"level": "error"
 				}
+			},
+			"style": {
+				"useConsistentObjectDefinitions": {
+					"fix": "safe",
+					"level": "error",
+					"options": {
+						"syntax": "shorthand"
+					}
+				}
 			}
 		}
 	},

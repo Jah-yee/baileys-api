@@ -7,24 +7,40 @@ import makeWASocket, {
 	type CacheStore,
 	DisconnectReason,
 	makeCacheableSignalKeyStore,
+	proto,
+	type WAMessageKey,
 	type WASocket,
 } from "baileys";
 import type { EffectDrizzleQueryError } from "drizzle-orm/effect-core";
-import { Cause, Deferred, Effect, Either, PubSub, Queue, Ref, type Scope, Stream } from "effect";
-import type * as Database from "~/lib/db/index.js";
+import {
+	type Cause,
+	Deferred,
+	Effect,
+	Either,
+	PubSub,
+	Queue,
+	Ref,
+	Runtime,
+	type Scope,
+	Stream,
+} from "effect";
+import * as Database from "~/lib/db/index.js";
 import type * as ConnectionSchema from "~/modules/connections/schema.js";
-import { encodeToJson } from "../codec.js";
+import { decode, encodeToJson } from "../codec.js";
 import { env } from "../env.js";
+import { getFirstWorkingProxyAgent } from "../proxy.js";
 import * as WhatsAppAuthState from "./auth-state.js";
+import { callHandler } from "./handlers/call.js";
 import { chatHandler } from "./handlers/chat.js";
 import { connectionHandler } from "./handlers/connection.js";
 import { contactHandler } from "./handlers/contact.js";
 import { groupHandler } from "./handlers/group.js";
 import { historySyncHandler } from "./handlers/history-sync.js";
 import { messageHandler } from "./handlers/message.js";
-import { makeFilteredEventHandler } from "./handlers/utils.js";
+import { type EventHandlerOptions, makeFilteredEventHandler } from "./handlers/utils.js";
+import { webhookHandler } from "./handlers/webhook.js";
 import { BaileysLogger } from "./logger.js";
-import { type AnyJid, getAlternateJidFromDb, isPhoneNumberJid } from "./utils.js";
+import { type AnyJid, getAlternateJidFromDb, isLidJid, isPhoneNumberJid } from "./utils.js";
 
 export interface WhatsAppSocketStreamData {
 	readonly connection: ConnectionSchema.Connection;
@@ -81,19 +97,24 @@ export const make: ({
 	connection,
 	retryCounterCache,
 }) {
-	const runtime = yield* Effect.runtime();
+	const runtime = yield* Effect.runtime<Database.Database>();
 	const eventQueue = yield* Queue.unbounded<WhatsAppSocketStreamData>();
 	const restartSignal = yield* Deferred.make<boolean>();
 	const firstQrCodeSignal = yield* Deferred.make<string>();
 
 	const authState = yield* WhatsAppAuthState.make(connection);
 	const logger = new BaileysLogger(runtime);
+	const agent = yield* getFirstWorkingProxyAgent(
+		connection.config.proxyUrls.map((u) => u.toString()),
+	).pipe(Effect.catchAll(() => Effect.succeed(null)));
+
 	const instance = makeWASocket({
 		generateHighQualityLinkPreview: true,
 		markOnlineOnConnect: false,
 		syncFullHistory: true,
 		browser: Browsers.windows("Desktop"),
 		...connection.config.baileysConfig,
+		...(agent ? { agent, fetchAgent: agent } : {}),
 		logger,
 		msgRetryCounterCache: retryCounterCache as CacheStore,
 		auth: {
@@ -103,6 +124,8 @@ export const make: ({
 				logger.child({ name: "SignalKeyStoreCache" }),
 			),
 		},
+		getMessage: (key) => Runtime.runPromise(runtime)(getMessageBody(connection, key)),
+		cachedGroupMetadata: (jid) => Runtime.runPromise(runtime)(getGroupMetadata(connection, jid)),
 	});
 
 	const requestPairCode = Effect.fn("WhatsAppSocket.requestPairCode")(function* () {
@@ -162,8 +185,8 @@ export const make: ({
 		getAlternateJid,
 	} as const;
 
-	const lifecycleHandler = makeFilteredEventHandler(["connection.update", "creds.update", "call"])(
-		Effect.fn("WhatsAppSocket.lifecycleHandler")(function* ({ events }) {
+	const authHandler = makeFilteredEventHandler(["connection.update", "creds.update"])(
+		Effect.fnUntraced(function* ({ events }) {
 			if (events["connection.update"]) {
 				const update = events["connection.update"];
 				const isSignalFired = yield* Deferred.isDone(firstQrCodeSignal);
@@ -175,58 +198,39 @@ export const make: ({
 			if (events["creds.update"]) {
 				yield* authState.save();
 			}
-
-			// TODO: Move this outside
-			if (events.call && connection.config.shouldRejectCalls) {
-				for (const call of events.call) {
-					if (call.status !== "offer") {
-						continue;
-					}
-
-					const maybeRejected = yield* Effect.either(
-						Effect.tryPromise({
-							try: () => instance.rejectCall(call.id, call.from),
-							catch: (e) => new Cause.UnknownException(e),
-						}),
-					);
-					if (Either.isRight(maybeRejected)) {
-						yield* Effect.log("Rejected incoming call.", call);
-					} else {
-						yield* Effect.logError("Failed to reject incoming call:", maybeRejected.left);
-					}
-				}
-			}
 		}),
 	);
 
+	const debugHandler = Effect.fnUntraced(function* ({ events }: EventHandlerOptions) {
+		if (!env.ENABLE_DEBUG_EVENTS_TO_FILE) {
+			return;
+		}
+
+		const target = path.join(
+			process.cwd(),
+			"debug",
+			`events-${Date.now()}-${crypto.randomUUID()}.json`,
+		);
+		yield* Effect.tryPromise(() => writeFile(target, encodeToJson(events, 2))).pipe(
+			Effect.catchAll((e) => Effect.logError("Failed to write events debug file:", e)),
+		);
+	});
+
 	const handlerStream = Stream.fromQueue(eventQueue).pipe(
 		Stream.map((data) => ({ ...data, socket, stateRef })),
-		Stream.tap(({ events }) =>
-			Effect.gen(function* () {
-				if (!env.ENABLE_DEBUG_EVENTS_TO_FILE) {
-					return;
-				}
-
-				const target = path.join(
-					process.cwd(),
-					"debug",
-					`events-${Date.now()}-${crypto.randomUUID()}.json`,
-				);
-				yield* Effect.tryPromise(() => writeFile(target, encodeToJson(events, 2))).pipe(
-					Effect.catchAll((e) => Effect.logError("Failed to write events debug file:", e)),
-				);
-			}),
-		),
 		Stream.flatMap((args) =>
 			Effect.all(
 				[
 					connectionHandler(args),
-					lifecycleHandler(args),
+					authHandler(args),
 					historySyncHandler(args),
 					contactHandler(args),
 					chatHandler(args),
 					messageHandler(args),
 					groupHandler(args),
+					callHandler(args),
+					webhookHandler(args),
+					debugHandler(args),
 				],
 				{
 					concurrency: "unbounded",
@@ -294,4 +298,68 @@ export const make: ({
 	);
 
 	return socket;
+});
+
+const getMessageBody = Effect.fnUntraced(function* (
+	connection: ConnectionSchema.Connection,
+	key: WAMessageKey,
+) {
+	const db = yield* Database.Database;
+	const id = key.id;
+	let remoteJid = key.remoteJid;
+	if (!id || !remoteJid) {
+		return undefined;
+	}
+
+	const isPhoneNumber = isPhoneNumberJid(remoteJid);
+	if (isPhoneNumber && key.remoteJidAlt && isLidJid(key.remoteJidAlt)) {
+		remoteJid = key.remoteJidAlt;
+	} else if (isPhoneNumber) {
+		const maybeLid = yield* getAlternateJidFromDb(remoteJid, db);
+		if (maybeLid) {
+			remoteJid = maybeLid;
+		}
+	}
+
+	const message = yield* db.query.messages.findFirst({
+		where: {
+			connectionId: connection.recordId,
+			id,
+			remoteJid,
+			fromMe: key.fromMe ?? false,
+		},
+	});
+	if (!message) {
+		return undefined;
+	}
+
+	const maybeMessage = yield* Effect.either(Effect.try(() => decode(message.data)));
+	if (Either.isLeft(maybeMessage) || !maybeMessage.right.message) {
+		return undefined;
+	}
+
+	return proto.Message.fromObject(maybeMessage.right.message);
+});
+
+const getGroupMetadata = Effect.fnUntraced(function* (
+	connection: ConnectionSchema.Connection,
+	jid: string,
+) {
+	const db = yield* Database.Database;
+	const group = yield* db.query.groups.findFirst({
+		where: {
+			connectionId: connection.recordId,
+			id: jid,
+		},
+	});
+	if (!group) {
+		return undefined;
+	}
+
+	const maybeMetadata = yield* Effect.either(Effect.try(() => decode(group.data)));
+	if (Either.isLeft(maybeMetadata)) {
+		return undefined;
+	}
+
+	return maybeMetadata.right;
 });

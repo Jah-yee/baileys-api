@@ -20,7 +20,7 @@ export const historySyncHandler = makeFilteredEventHandler(["messaging-history.s
 				Effect.gen(function* () {
 					yield* upsertContacts(connection, data.contacts, tx);
 					yield* upsertChats(connection, data.chats, "upsert", tx);
-					const messages = yield* prepareMessages(connection, data.messages);
+					const messages = yield* prepareMessages(socket, connection, data.messages, tx);
 					yield* upsertMessages(connection, messages, { type: "append" }, tx);
 
 					// Update existing phone number-based contacts to switch to lid-based
@@ -34,9 +34,7 @@ export const historySyncHandler = makeFilteredEventHandler(["messaging-history.s
 						const foundContacts = yield* tx.query.contacts.findMany({
 							where: {
 								connectionId: connection.recordId,
-								id: {
-									in: phoneNumbers,
-								},
+								id: { in: phoneNumbers },
 								idType: "phone-number",
 							},
 						});

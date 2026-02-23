@@ -39,7 +39,11 @@ export class Connection extends S.Class<Connection>("Connection")({
 				}),
 			}),
 		).annotations({
-			description: "A list of webhooks to send events to.",
+			description: `A list of webhooks to send events to. The request will be sent as POST request with a JSON body of shape \`{ 
+	connection, // The associated connection info
+	events, // The events data with the shape of BaileysEventMap
+	receivedAt // The timestamp when the events are received
+}\`. The request will only consider 20x status codes as successful, and will retry with exponential backoff for transient errors (e.g. network issues, 5xx responses).`,
 		}),
 		baileysConfig: S.Record({ key: S.String, value: S.Any }).pipe(S.optional).annotations({
 			description:

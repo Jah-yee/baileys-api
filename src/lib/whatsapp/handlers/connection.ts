@@ -1,12 +1,20 @@
 import { Boom } from "@hapi/boom";
-import { DisconnectReason } from "baileys";
+import { DisconnectReason, jidNormalizedUser } from "baileys";
+import { eq } from "drizzle-orm";
 import { Deferred, Duration, Effect, Ref } from "effect";
 import QrCode from "qrcode";
+import * as Database from "~/lib/db/index.js";
 import { env } from "~/lib/env.js";
+import { isPhoneNumberJid } from "../utils.js";
 import { makeFilteredEventHandler } from "./utils.js";
 
 export const connectionHandler = makeFilteredEventHandler(["connection.update"])(
-	Effect.fn("WhatsAppSocket.connectionHandler")(function* ({ stateRef, socket, events }) {
+	Effect.fn("WhatsAppSocket.connectionHandler")(function* ({
+		connection,
+		stateRef,
+		socket,
+		events,
+	}) {
 		const update = events["connection.update"];
 		if (!update) {
 			return;
@@ -69,8 +77,21 @@ export const connectionHandler = makeFilteredEventHandler(["connection.update"])
 			}));
 			yield* Effect.log("Connection authenticated.");
 
-			// TODO: Overwrite phone number in config with actual phone number
-			// associated with the WhatsApp account
+			// Sync phone number with the actual authenticated one if they differ
+			const me = socket.instance.authState.creds.me;
+			if (!me) {
+				return;
+			}
+
+			const jid = jidNormalizedUser(me?.phoneNumber ?? me.id);
+			const [maybePhoneNumber] = jid.split("@");
+			if (isPhoneNumberJid(jid) && maybePhoneNumber !== connection.phoneNumber) {
+				const db = yield* Database.Database;
+				yield* db
+					.update(Database.tables.connections)
+					.set({ phoneNumber: maybePhoneNumber })
+					.where(eq(Database.tables.connections.recordId, connection.recordId));
+			}
 		}
 
 		// Handle disconnection

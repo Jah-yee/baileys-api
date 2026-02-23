@@ -12,8 +12,6 @@ export const groupHandler = makeFilteredEventHandler([
 	"group-participants.update",
 ])(
 	Effect.fn("WhatsAppSocket.groupHandler")(function* ({ connection, events }) {
-		const db = yield* Database.Database;
-
 		const upsertData = events["groups.upsert"];
 		const upsert = upsertData
 			? upsertGroups(connection, upsertData).pipe(
@@ -31,6 +29,7 @@ export const groupHandler = makeFilteredEventHandler([
 		const participantsUpdateData = events["group-participants.update"];
 		const participantsUpdate = participantsUpdateData
 			? Effect.gen(function* () {
+					const db = yield* Database.Database;
 					const data = participantsUpdateData;
 					const existingGroup = yield* db.query.groups.findFirst({
 						where: {
@@ -63,14 +62,14 @@ export const groupHandler = makeFilteredEventHandler([
 								}
 								break;
 							}
-							case "modify":
-								{
-									const existing = participantsMap.get(participant.id);
-									if (existing) {
-										participantsMap.set(participant.id, { ...existing, ...participant });
-									}
+							case "modify": {
+								const existing = participantsMap.get(participant.id);
+								if (existing) {
+									participantsMap.set(participant.id, { ...existing, ...participant });
 								}
+
 								break;
+							}
 							case "remove":
 								participantsMap.delete(participant.id);
 						}

@@ -1,5 +1,7 @@
+import type { SqlError } from "@effect/sql";
 import { PgClient } from "@effect/sql-pg";
 import { EffectCache } from "drizzle-orm/cache/core/cache-effect";
+import type { EffectDrizzleQueryError } from "drizzle-orm/effect-core";
 import * as PgDrizzle from "drizzle-orm/effect-postgres";
 import { type Context, Effect, Layer, LogLevel, Schedule } from "effect";
 import { types } from "pg";
@@ -35,10 +37,10 @@ export class Database extends Effect.Service<Database>()("Database", {
 	dependencies: [PgClientLive],
 }) {}
 
+export type DatabaseError = EffectDrizzleQueryError | SqlError.SqlError;
+
 export type DatabaseClient = Context.Tag.Service<typeof Database>;
-export type TransactionClient = Parameters<
-	Parameters<Context.Tag.Service<typeof Database>["transaction"]>[0]
->[0];
+export type TransactionClient = Parameters<Parameters<DatabaseClient["transaction"]>[0]>[0];
 
 export const retryPolicy: RetryPolicy.RetryPolicyOptions = {
 	timeoutDuration: "30 seconds",

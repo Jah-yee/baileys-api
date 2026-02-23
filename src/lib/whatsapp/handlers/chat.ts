@@ -5,6 +5,7 @@ import { Effect, Either } from "effect";
 import { encode } from "~/lib/codec.js";
 import * as Database from "~/lib/db/index.js";
 import type * as ConnectionSchema from "~/modules/connections/schema.js";
+import { getAlternateJidFromDb, isLidJid, isPhoneNumberJid, type LidJid } from "../utils.js";
 import { makeFilteredEventHandler } from "./utils.js";
 
 export const chatHandler = makeFilteredEventHandler([
@@ -32,13 +33,27 @@ export const chatHandler = makeFilteredEventHandler([
 		const deleteData = events["chats.delete"];
 		const del = deleteData
 			? Effect.gen(function* () {
-					const ids = deleteData;
+					const lids = deleteData.filter(isLidJid);
+					const phoneNumbers = deleteData.filter(isPhoneNumberJid);
+					const jidsMap = yield* getAlternateJidFromDb(phoneNumbers, db);
+
+					for (const phoneNumber of phoneNumbers) {
+						const maybeAlternate = jidsMap.get(phoneNumber);
+						if (maybeAlternate) {
+							lids.push(maybeAlternate as LidJid);
+						} else {
+							yield* Effect.logWarning(
+								`Couldn't find alternate \`jid\` for phone number = "${phoneNumber}". Skipping deletion for this chat.`,
+							);
+						}
+					}
+
 					const affected = yield* db
 						.delete(Database.tables.chats)
 						.where(
 							and(
 								eq(Database.tables.chats.connectionId, connection.recordId),
-								inArray(Database.tables.chats.id, ids),
+								inArray(Database.tables.chats.id, lids),
 							),
 						)
 						.returning({ recordId: Database.tables.chats.recordId });
@@ -71,10 +86,21 @@ export const upsertChats: (
 		const duplicates: (BChat | BChatUpdate)[] = [];
 
 		for (const chat of data) {
-			const id = chat.id;
+			let id = chat.id;
 			if (!id) {
 				yield* Effect.logWarning("Received chat without `id`. Skipping.", chat);
 				continue;
+			}
+
+			// Normalize phone number to lid when possible
+			const isPhoneNumber = isPhoneNumberJid(id);
+			if (isPhoneNumber && chat.lidJid) {
+				id = chat.lidJid;
+			} else if (isPhoneNumber) {
+				const maybeLid = yield* getAlternateJidFromDb(id, client);
+				if (maybeLid) {
+					id = maybeLid;
+				}
 			}
 
 			if (seenIds.has(id)) {

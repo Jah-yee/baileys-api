@@ -3,8 +3,9 @@ import { sql } from "drizzle-orm";
 import type { EffectDrizzleQueryError } from "drizzle-orm/effect-core";
 import { Effect, Either } from "effect";
 import * as Database from "~/lib/db/index.js";
+import type { Contact } from "~/lib/db/schema/contacts.js";
 import type * as ConnectionSchema from "~/modules/connections/schema.js";
-import { isLidJid } from "../utils.js";
+import { isGroupJid, isLidJid } from "../utils.js";
 import { makeFilteredEventHandler } from "./utils.js";
 
 export const contactHandler = makeFilteredEventHandler(["contacts.upsert", "contacts.update"])(
@@ -46,23 +47,36 @@ export const upsertContacts: (
 		const duplicates: Partial<BContact>[] = [];
 
 		for (const contact of data) {
-			const maybeId = contact.id || contact.lid || contact.phoneNumber;
-			if (!maybeId) {
+			let id = contact.id || contact.lid || contact.phoneNumber;
+			if (!id) {
 				yield* Effect.logWarning("Received contact without `id`. Skipping.", contact);
 				continue;
 			}
 
-			if (seenIds.has(maybeId)) {
+			if (isGroupJid(id)) {
+				yield* Effect.logWarning("Received unexpected group `jid`. Skipping.", contact);
+				continue;
+			}
+
+			let kind: Contact["idType"] = isLidJid(id) ? "lid" : "phone-number";
+			const lidJid = kind === "lid" ? id : contact.lid;
+			// Normalize phone number to lid when possible
+			if (kind === "phone-number" && lidJid) {
+				kind = "lid";
+				id = lidJid;
+			}
+
+			if (seenIds.has(id)) {
 				duplicates.push(contact);
 				continue;
 			}
 
-			seenIds.add(maybeId);
+			seenIds.add(id);
 			contacts.push({
-				data: { ...contact, id: maybeId },
+				data: { ...contact, id },
 				connectionId: connection.recordId,
-				id: maybeId,
-				idType: isLidJid(maybeId) ? "lid" : "phone-number",
+				id,
+				idType: kind,
 			});
 		}
 

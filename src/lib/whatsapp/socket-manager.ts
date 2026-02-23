@@ -32,7 +32,6 @@ export class WhatsAppSocketManager extends Effect.Service<WhatsAppSocketManager>
 			const sockets = yield* Ref.make(
 				HashMap.empty<ConnectionSchema.RecordId, WhatsAppSocketManagerMapEntry>(),
 			);
-			const managerScope = yield* Scope.Scope;
 
 			const createInternal: (
 				connection: ConnectionSchema.Connection,
@@ -74,10 +73,10 @@ export class WhatsAppSocketManager extends Effect.Service<WhatsAppSocketManager>
 							// Create fresh scope then recreate the socket
 							const newScope = yield* Scope.make();
 							yield* createInternal(connection, newScope, stateRef, retryCounterCache).pipe(
-								Effect.forkIn(managerScope),
+								Effect.forkScoped,
 							);
 						}
-					}).pipe(Effect.forkIn(managerScope));
+					}).pipe(Effect.forkScoped);
 
 					return entry;
 				},
@@ -146,15 +145,10 @@ export class WhatsAppSocketManager extends Effect.Service<WhatsAppSocketManager>
 				}
 			});
 
-			const subscribe = Effect.fn("WhatsAppSocketManager.subscribe")(function* (
-				id: ConnectionSchema.RecordId,
-			) {
-				const existing = yield* get(id);
-				return Stream.fromPubSub(pubsub).pipe(
-					Stream.filter((data) => data.connection.recordId === existing.connection.recordId),
-					Stream.map((data) => data.events),
-				);
-			});
+			const subscribe = (id: ConnectionSchema.RecordId) =>
+				Stream.fromPubSub(pubsub).pipe(Stream.filter((data) => data.connection.recordId === id));
+
+			const subscribeAll = () => Stream.fromPubSub(pubsub);
 
 			return {
 				create,
@@ -163,6 +157,7 @@ export class WhatsAppSocketManager extends Effect.Service<WhatsAppSocketManager>
 				remove,
 				restart,
 				subscribe,
+				subscribeAll,
 			};
 		}),
 	},

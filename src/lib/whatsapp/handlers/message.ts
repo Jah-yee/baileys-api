@@ -1,4 +1,6 @@
 import {
+	areJidsSameUser,
+	jidNormalizedUser,
 	updateMessageWithEventResponse,
 	updateMessageWithPollUpdate,
 	updateMessageWithReaction,
@@ -14,6 +16,8 @@ import { decode, encode } from "~/lib/codec.js";
 import * as Database from "~/lib/db/index.js";
 import type { MakeNonNullable } from "~/lib/types.js";
 import type * as ConnectionSchema from "~/modules/connections/schema.js";
+import type { WhatsAppSocket } from "../socket.js";
+import { getAlternateJidFromDb, isLidJid, isPhoneNumberJid } from "../utils.js";
 import { makeFilteredEventHandler } from "./utils.js";
 
 const REQUEST_PLACEHOLDER = "requestPlaceholder";
@@ -37,8 +41,8 @@ export const messageHandler = makeFilteredEventHandler([
 						args = { type: "notify", requestId: upsertData.requestId, instance: socket.instance };
 					}
 
-					const data = yield* prepareMessages(connection, upsertData.messages);
-					yield* upsertMessages(connection, data, args);
+					const data = yield* prepareMessages(socket, connection, upsertData.messages, db);
+					yield* upsertMessages(connection, data, args, db);
 				}).pipe(Effect.withSpan("WhatsAppSocket.messageHandler.upsert"))
 			: Effect.void;
 
@@ -46,10 +50,12 @@ export const messageHandler = makeFilteredEventHandler([
 		const update = updateData
 			? Effect.gen(function* () {
 					const data = yield* prepareMessages(
+						socket,
 						connection,
 						updateData.map((u) => ({ ...u.update, key: u.key })),
+						db,
 					);
-					yield* upsertMessages(connection, data);
+					yield* upsertMessages(connection, data, { type: "append" }, db);
 				}).pipe(Effect.withSpan("WhatsAppSocket.messageHandler.update"))
 			: Effect.void;
 
@@ -57,18 +63,32 @@ export const messageHandler = makeFilteredEventHandler([
 		const del = deleteData
 			? Effect.gen(function* () {
 					if ("all" in deleteData) {
+						let remoteJid = deleteData.jid;
+						if (isPhoneNumberJid(remoteJid)) {
+							const maybeLid = yield* getAlternateJidFromDb(remoteJid, db);
+							if (maybeLid) {
+								remoteJid = maybeLid;
+							}
+						}
+
 						yield* db
 							.delete(Database.tables.messages)
 							.where(
 								and(
 									eq(Database.tables.messages.connectionId, connection.recordId),
-									eq(Database.tables.messages.remoteJid, deleteData.jid),
+									eq(Database.tables.messages.remoteJid, remoteJid),
 								),
 							);
 					} else {
 						const deletions: MakeNonNullable<WAMessageKey, "id" | "remoteJid">[] = [];
+						const jidsMap = yield* getAlternateJidFromDb(
+							deleteData.keys.map((k) => k.remoteJid).filter(isPhoneNumberJid),
+							db,
+						);
+
 						for (const key of deleteData.keys) {
-							if (!key.id || !key.remoteJid) {
+							let remoteJid = key.remoteJid;
+							if (!key.id || !remoteJid) {
 								yield* Effect.logWarning(
 									"Received message deletion key without `id` or `remoteJid`. Skipping.",
 									key,
@@ -76,7 +96,14 @@ export const messageHandler = makeFilteredEventHandler([
 								continue;
 							}
 
-							deletions.push({ ...key, id: key.id, remoteJid: key.remoteJid });
+							if (isPhoneNumberJid(remoteJid)) {
+								const maybeLid = jidsMap.get(remoteJid);
+								if (maybeLid) {
+									remoteJid = maybeLid;
+								}
+							}
+
+							deletions.push({ ...key, id: key.id, remoteJid });
 						}
 
 						if (deletions.length <= 0) {
@@ -107,8 +134,10 @@ export const messageHandler = makeFilteredEventHandler([
 		const reaction = reactionData
 			? Effect.gen(function* () {
 					const data = yield* prepareMessages(
+						socket,
 						connection,
 						reactionData.map((r) => ({ key: r.key, reactions: [r.reaction] })),
+						db,
 					);
 					yield* aggregateField(
 						connection,
@@ -123,7 +152,7 @@ export const messageHandler = makeFilteredEventHandler([
 						db,
 					);
 
-					yield* upsertMessages(connection, data);
+					yield* upsertMessages(connection, data, { type: "append" }, db);
 				}).pipe(Effect.withSpan("WhatsAppSocket.messageHandler.reaction"))
 			: Effect.void;
 
@@ -131,8 +160,10 @@ export const messageHandler = makeFilteredEventHandler([
 		const receipt = receiptData
 			? Effect.gen(function* () {
 					const data = yield* prepareMessages(
+						socket,
 						connection,
 						receiptData.map((u) => ({ key: u.key, userReceipt: [u.receipt] })),
+						db,
 					);
 					yield* aggregateField(
 						connection,
@@ -145,7 +176,7 @@ export const messageHandler = makeFilteredEventHandler([
 						db,
 					);
 
-					yield* upsertMessages(connection, data);
+					yield* upsertMessages(connection, data, { type: "append" }, db);
 				}).pipe(Effect.withSpan("WhatsAppSocket.messageHandler.receipt"))
 			: Effect.void;
 
@@ -174,14 +205,14 @@ export const upsertMessages: (
 	connection: ConnectionSchema.Connection,
 	data: Database.tables.MessageInsert[],
 	args?: UpsertArgs,
-	tx?: Database.TransactionClient,
+	maybeClient?: Database.TransactionClient | Database.DatabaseClient,
 ) => Effect.Effect<void, EffectDrizzleQueryError, Database.Database> = Effect.fnUntraced(function* (
 	connection,
 	data,
 	args = { type: "append" },
-	tx,
+	maybeClient,
 ) {
-	const client = tx ?? (yield* Database.Database);
+	const client = maybeClient ?? (yield* Database.Database);
 	const messages: Database.tables.MessageInsert[] = [];
 	const seenIds = new Set<string>();
 	const duplicates: Database.tables.MessageInsert[] = [];
@@ -278,22 +309,49 @@ export const upsertMessages: (
 
 	if (duplicates.length > 0) {
 		yield* Effect.log(`Retrying ${duplicates.length} duplicate messages.`);
-		yield* upsertMessages(connection, duplicates, args, tx);
+		yield* upsertMessages(connection, duplicates, args, client);
 	}
 });
 
 export const prepareMessages = Effect.fnUntraced(function* (
+	socket: WhatsAppSocket,
 	connection: ConnectionSchema.Connection,
 	data: WAMessage[],
+	client?: Database.DatabaseClient | Database.TransactionClient,
 ) {
 	const messages: Database.tables.MessageInsert[] = [];
+	const jidsMap = yield* getAlternateJidFromDb(
+		data.map((m) => m.key.remoteJid).filter(isPhoneNumberJid),
+		client,
+	);
 
 	for (const message of data) {
 		const id = message.key?.id;
-		const remoteJid = message.key?.remoteJid;
+		let remoteJid = message.key?.remoteJid;
 		if (!id || !remoteJid) {
 			yield* Effect.logWarning("Received message without `id` or `remoteJid`. Skipping.", message);
 			continue;
+		}
+
+		const isPhoneNumber = isPhoneNumberJid(remoteJid);
+		const isOwnPhoneNumber =
+			isPhoneNumber &&
+			areJidsSameUser(
+				remoteJid,
+				jidNormalizedUser(socket.instance.user?.phoneNumber ?? socket.instance.user?.id),
+			);
+		const ownLid = jidNormalizedUser(socket.instance.user?.lid);
+
+		// Normalize phone number to lid when possible
+		if (isOwnPhoneNumber && ownLid) {
+			remoteJid = ownLid;
+		} else if (isPhoneNumber && message.key.remoteJidAlt && isLidJid(message.key.remoteJidAlt)) {
+			remoteJid = message.key.remoteJidAlt;
+		} else if (isPhoneNumber) {
+			const maybeLid = jidsMap.get(remoteJid);
+			if (maybeLid) {
+				remoteJid = maybeLid;
+			}
 		}
 
 		const encoded = encode(message);
