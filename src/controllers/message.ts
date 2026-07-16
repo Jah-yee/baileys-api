@@ -27,7 +27,7 @@ export const list: RequestHandler = async (req, res) => {
           : null,
     });
   } catch (e) {
-    const message = 'An error occured during message list';
+    const message = 'An error occurred during message list';
     logger.error(e, message);
     res.status(500).json({ error: message });
   }
@@ -44,7 +44,7 @@ export const send: RequestHandler = async (req, res) => {
     const result = await session.sendMessage(jid, message, options);
     res.status(200).json(result);
   } catch (e) {
-    const message = 'An error occured during message send';
+    const message = 'An error occurred during message send';
     logger.error(e, message);
     res.status(500).json({ error: message });
   }
@@ -70,7 +70,7 @@ export const sendBulk: RequestHandler = async (req, res) => {
       const result = await session.sendMessage(jid, message, options);
       results.push({ index, result });
     } catch (e) {
-      const message = 'An error occured during message send';
+      const message = 'An error occurred during message send';
       logger.error(e, message);
       errors.push({ index, error: message });
     }
@@ -98,7 +98,7 @@ export const download: RequestHandler = async (req, res) => {
     res.write(buffer);
     res.end();
   } catch (e) {
-    const message = 'An error occured during message media download';
+    const message = 'An error occurred during message media download';
     logger.error(e, message);
     res.status(500).json({ error: message });
   }
