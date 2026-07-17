@@ -22,7 +22,7 @@ export const list: RequestHandler = async (req, res) => {
           : null,
     });
   } catch (e) {
-    const message = 'An error occured during group list';
+    const message = 'An error occurred during group list';
     logger.error(e, message);
     res.status(500).json({ error: message });
   }
@@ -35,7 +35,7 @@ export const find: RequestHandler = async (req, res) => {
     const data = await session.groupMetadata(jid);
     res.status(200).json(data);
   } catch (e) {
-    const message = 'An error occured during group metadata fetch';
+    const message = 'An error occurred during group metadata fetch';
     logger.error(e, message);
     res.status(500).json({ error: message });
   }
